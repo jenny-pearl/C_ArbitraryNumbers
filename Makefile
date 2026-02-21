@@ -1,2 +1,2 @@
 AP: AP.c
-	clang AP.c -o AP -Wall -Wextra
+	clang AP.c -o AP -Wall -Wextra -g -fsanitize=address
