@@ -15,6 +15,8 @@
 #define LONGEST_DIGIT 19
 #define INITIAL_COUNT 10
 
+static const unsigned long long BIGGEST_NUMBER_USED = 9999999999999999999ULL;
+
 typedef struct {
         uint64_t count;
         const char *content;
@@ -37,8 +39,6 @@ typedef struct {
         Decimal decimal;
 } AP;
 
-const static uint64_t BIGGEST_NUMBER_USABLE = 9999999999999999999;
-
 uint64_t pow_uint64_t(uint64_t number, uint64_t power)
 {
         uint64_t result = 1;
@@ -59,18 +59,18 @@ StringView c_string_into_view(char *format)
         return (StringView){ .content = format, .count = i };
 }
 
-void append_decimal(Decimal *decimal, uint64_t number, uint64_t digitCount)
+void append_decimal(AP *ap, uint64_t number, uint64_t digitCount)
 {
-        if (decimal->count >= decimal->capacity) {
-                if (decimal->capacity == 0) {
-                        decimal->capacity = INITIAL_COUNT;
+        if (ap->decimal.count >= ap->decimal.capacity) {
+                if (ap->decimal.capacity == 0) {
+                        ap->decimal.capacity = INITIAL_COUNT;
                 } else {
-                        decimal->capacity *= 2;
+                        ap->decimal.capacity *= 2;
                 }
 
-                decimal->limbs = realloc(decimal->limbs,
-                                sizeof(uint64_t) * decimal->capacity);
-                if (decimal->limbs == NULL) {
+                ap->decimal.limbs = realloc(ap->decimal.limbs,
+                                sizeof(uint64_t) * ap->decimal.capacity);
+                if (ap->decimal.limbs == NULL) {
                         fprintf(stderr, "Decimal part allocation failed.\n");
                         return;
                 }
@@ -78,36 +78,36 @@ void append_decimal(Decimal *decimal, uint64_t number, uint64_t digitCount)
 
         number = number * pow_uint64_t(10, LONGEST_DIGIT - digitCount);
 
-        decimal->limbs[decimal->count++] = number;
+        ap->decimal.limbs[ap->decimal.count++] = number;
 }
 
-void append_whole(Whole *whole, uint64_t number)
+void append_whole(AP *ap, uint64_t number)
 {
-        if (whole->count >= whole->capacity) {
-                if (whole->capacity == 0) {
-                        whole->capacity = INITIAL_COUNT;
+        if (ap->whole.count >= ap->whole.capacity) {
+                if (ap->whole.capacity == 0) {
+                        ap->whole.capacity = INITIAL_COUNT;
                 } else {
-                        whole->capacity *= 2;
+                        ap->whole.capacity *= 2;
                 }
 
-                whole->limbs = realloc(whole->limbs,
-                                sizeof(uint64_t) * whole->capacity);
+                ap->whole.limbs = realloc(ap->whole.limbs,
+                                sizeof(uint64_t) * ap->whole.capacity);
 
-                if (whole->limbs == NULL) {
+                if (ap->whole.limbs == NULL) {
                         fprintf(stderr, "Whole part allocation failed.\n");
                         return;
                 }
         }
 
-        whole->limbs[whole->count++] = number;
+        ap->whole.limbs[ap->whole.count++] = number;
 }
 
 void AP_print(AP *ap)
 {
         if (ap->whole.count != 0) {
-                printf("%ld", ap->whole.limbs[ap->whole.count - 1]);
+                printf("%lu", ap->whole.limbs[ap->whole.count - 1]);
                 for (int32_t i = ap->whole.count - 2; i >= 0; i--) {
-                        printf("%019ld", ap->whole.limbs[i]);
+                        printf("%019lu", ap->whole.limbs[i]);
                 }
         } else {
                 printf("0");
@@ -121,7 +121,7 @@ void AP_print(AP *ap)
         printf(".");
 
         for (uint32_t i = 0; i < ap->decimal.count; i++) {
-                printf("%ld", ap->decimal.limbs[i]);
+                printf("%lu", ap->decimal.limbs[i]);
         }
 
         printf("\n");
@@ -144,7 +144,7 @@ AP AP_init(char *format)
                         i >= 0; i--) {
                 if ((terminator - i - 1 > 0)
                                 && (terminator - i - 1) % LONGEST_DIGIT == 0) {
-                        append_whole(&(result.whole), temp);
+                        append_whole(&result, temp);
                         temp = 0;
                         digitValue = 1;
                 }
@@ -153,7 +153,7 @@ AP AP_init(char *format)
         }
 
         if (temp != 0) {
-                append_whole(&(result.whole), temp);
+                append_whole(&result, temp);
                 temp = 0;
         }
 
@@ -165,7 +165,7 @@ AP AP_init(char *format)
 
         for (uint64_t i = terminator + 1; i < stringView.count; i++) {
                 if (digitCount != 0 && digitCount % LONGEST_DIGIT == 0) {
-                        append_decimal(&(result.decimal), temp, digitCount);
+                        append_decimal(&result, temp, digitCount);
                         temp = 0;
                         digitCount = 0;
                 }
@@ -175,45 +175,51 @@ AP AP_init(char *format)
         }
 
         if (temp != 0) {
-                append_decimal(&(result.decimal), temp, digitCount);
+                append_decimal(&result, temp, digitCount);
         }
 
         return result;
 }
 
-// If you are going to use this function yourself make sure to
-// divide your number into chunks each being 19 numbers long
-// :)
 void AP_add_to_index_whole(AP *ap, uint64_t number, uint32_t index)
 {
         if (ap->whole.capacity > index) {
-                if ((uint64_t)BIGGEST_NUMBER_USABLE - ap->whole.limbs[index] > number) {
+                if (BIGGEST_NUMBER_USED - ap->whole.limbs[index] >= number) {
                         ap->whole.limbs[index] += number;
                 } else {
-                        ap->whole.limbs[index] = number - (BIGGEST_NUMBER_USABLE - ap->whole.limbs[index]);
+                        ap->whole.limbs[index] = number - (BIGGEST_NUMBER_USED - ap->whole.limbs[index] + 1);
                         AP_add_to_index_whole(ap, 1, index + 1);
                 }
                 return;
         }
 
-        uint32_t max = MAX(ap->whole.capacity * 2, index);
+        uint32_t oldCount = ap->whole.count;
 
-        ap->whole.count = max;
+        uint32_t max = MAX(INITIAL_COUNT, index + 1);
+        max = MAX(ap->decimal.capacity * 2, max);
+
+        ap->whole.count = index + 1;
         ap->whole.capacity = max;
-        ap->whole.limbs = realloc(ap->whole.limbs, ap->whole.capacity);
+        ap->whole.limbs = realloc(ap->whole.limbs, sizeof(uint64_t) * ap->whole.capacity);
 
-        ap->whole.limbs[max - 1] = number; // TODO: fix this stupid assignment error
+        while (oldCount < ap->decimal.capacity) {
+                ap->decimal.limbs[oldCount] = 0;
+                oldCount++;
+        }
+
+        ap->whole.limbs[index] = number;
 
         return;
 }
 
 void AP_add_to_index_decimal(AP *ap, uint64_t number, uint32_t index)
 {
-        if (ap->decimal.count - 1 > index) {
-                if (BIGGEST_NUMBER_USABLE - ap->decimal.limbs[index] > number) {
+        if (ap->decimal.capacity > index) {
+                if (BIGGEST_NUMBER_USED - ap->decimal.limbs[index] >= number) {
                         ap->decimal.limbs[index] += number;
                 } else {
-                        ap->decimal.limbs[index] = number - (BIGGEST_NUMBER_USABLE - ap->decimal.limbs[index]);
+                        ap->decimal.limbs[index] = number -
+                                (BIGGEST_NUMBER_USED - ap->decimal.limbs[index]);
                         if (index == 0) {
                                 AP_add_to_index_whole(ap, 1, 0);
                         } else {
@@ -223,13 +229,21 @@ void AP_add_to_index_decimal(AP *ap, uint64_t number, uint32_t index)
                 return;
         }
 
-        uint32_t max = MAX(ap->decimal.capacity * 2, index);
+        uint32_t oldCount = ap->decimal.count;
 
-        ap->decimal.count = max;
+        uint32_t max = MAX(INITIAL_COUNT, index + 1);
+        max = MAX(ap->decimal.capacity * 2, max);
+
+        ap->decimal.count = index + 1;
         ap->decimal.capacity = max;
-        ap->decimal.limbs = realloc(ap->decimal.limbs, ap->decimal.capacity);
+        ap->decimal.limbs = realloc(ap->decimal.limbs, sizeof(uint64_t) * ap->decimal.capacity);
 
-        ap->decimal.limbs[ap->decimal.count - 1] = number;
+        while (oldCount < ap->decimal.capacity) {
+                ap->decimal.limbs[oldCount] = 0;
+                oldCount++;
+        }
+
+        ap->decimal.limbs[index] = number;
 
         return;
 }
@@ -238,26 +252,81 @@ AP AP_addition(AP *first, AP *second)
 {
         AP result = {0};
 
-        for (uint32_t i = 0; i < first->whole.count && second->whole.count; i++) {
-                if (BIGGEST_NUMBER_USABLE - first->whole.limbs[i] > second->whole.limbs[i]) {
-                        AP_add_to_index_whole(&result, first->whole.limbs[i] + second->whole.limbs[i], i);
+        uint32_t secondCount = second->whole.count;
+        uint32_t firstCount = first->whole.count;
+        uint32_t index = 0;
+
+        for (; index < firstCount && index < secondCount; index++) {
+                if (BIGGEST_NUMBER_USED - first->whole.limbs[index]
+                                >= second->whole.limbs[index]) {
+                        AP_add_to_index_whole(&result,
+                                        first->whole.limbs[index]
+                                        + second->whole.limbs[index],
+                                        index);
                 } else {
-                        AP_add_to_index_whole(&result, second->whole.count - (BIGGEST_NUMBER_USABLE - first->whole.limbs[i]), i);
-                        AP_add_to_index_whole(&result, 1, i);
+                        AP_add_to_index_whole(&result,
+                                        second->whole.limbs[index]
+                                        - (BIGGEST_NUMBER_USED - first->whole.limbs[index] + 1),
+                                        index);
+                        AP_add_to_index_whole(&result, 1, index + 1);
                 }
         }
 
-        if (first->whole.count - 1) {
+        if (firstCount != index) {
                 for (uint32_t i = second->whole.count; i < first->whole.count; i++) {
-                        append_whole(&(result.whole), first->whole.limbs[i]);
+                        append_whole(&result, first->whole.limbs[i]);
                 }
-        } else {
+        } else if (secondCount != index) {
                 for (uint32_t i = first->whole.count; i < second->whole.count; i++) {
-                        append_whole(&(result.whole), second->whole.limbs[i]);
+                        append_whole(&result, second->whole.limbs[i]);
                 }
         }
 
-        // the whole part is done
+        if (first->decimal.count == 0 && second->decimal.count == 0) {
+                return result;
+        }
+
+        firstCount = first->decimal.count;
+        secondCount = second->decimal.count;
+
+        AP *longest = first->decimal.count > second->decimal.count ? first : second;
+        index = MIN(first->decimal.count, second->decimal.count);
+        uint32_t anchor = index;
+
+        for (; index > 0; index--) {
+                if (BIGGEST_NUMBER_USED - first->decimal.limbs[index - 1]
+                                >= second->decimal.limbs[index - 1]) {
+                        AP_add_to_index_decimal(&result, first->decimal.limbs[index - 1]
+                                        + second->decimal.limbs[index - 1],
+                                        index - 1);
+                } else {
+                        printf("index: %d\n", index);
+                        AP_add_to_index_decimal(&result, second->decimal.limbs[index - 1]
+                                        - (BIGGEST_NUMBER_USED - first->decimal.limbs[index - 1] + 1),
+                                        index - 1);
+                        if (index == 1) {
+                                AP_add_to_index_whole(&result, 1, 0);
+                        } else {
+                                AP_add_to_index_decimal(&result, 1, index - 2);
+                        }
+                }
+        }
+
+        for (; anchor < longest->decimal.count; anchor++) {
+                uint64_t digitValue;
+                uint32_t digitCount;
+                for (digitCount = 0, digitValue = 1;
+                                digitValue < longest->decimal.limbs[anchor];
+                                digitValue *= 10, digitCount++);
+                append_decimal(&result, longest->decimal.limbs[anchor], digitCount);
+        }
+
+        return result;
+}
+
+AP AP_subtraction(AP *first, AP *second)
+{
+        AP result = {0};
         return result;
 }
 
@@ -277,18 +346,19 @@ int main(void)
         AP first = {0};
         AP second = {0};
 
-        first = AP_init("444");
-        second = AP_init("555555555555555555555");
+        first = AP_init("0.555");
+        second = AP_init("0.555");
 
         AP_print(&first);
         AP_print(&second);
 
-        //AP result = AP_addition(&first, &second);
+        AP result = AP_addition(&first, &second);
 
-        //AP_print(&result);
+        AP_print(&result);
 
         AP_free(&first);
         AP_free(&second);
+        AP_free(&result);
 
         return 0;
 }
