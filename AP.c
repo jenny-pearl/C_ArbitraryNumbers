@@ -310,11 +310,13 @@ void AP_add_to_first(AP *first, AP *second)
 		if (BIGGEST_NUMBER_USABLE - first->decimal.limbs[i] >= second->decimal.limbs[i]) {
 			first->decimal.limbs[i] += second->decimal.limbs[i];
 		} else {
-			first->decimal.limbs[i] -= (BIGGEST_NUMBER_USABLE - second->decimal.limbs[i] + 1);
+			uint64_t temp = first->decimal.limbs[i] -
+				(BIGGEST_NUMBER_USABLE - second->decimal.limbs[i] + 1);
+			first->decimal.limbs[i] = temp;
 			if (i != 0) {
-				first->decimal.limbs[i - 1] += 1;
+				AP_add_to_index_decimal(first, i - 1, 1, LONGEST_NUMBER - 1);
 			} else {
-				first->whole.limbs[0] += 1;
+				AP_add_to_index_whole(first, 0, 1);
 			}
 		}
 	}
@@ -360,17 +362,16 @@ AP AP_subtraction(AP *first, AP *second)
 
 int main(void)
 {
-	AP first = AP_init("1.0000000000000000001");
-	AP temp = AP_init("0");
+	AP first = AP_init("0.9999999999999999999999999999");
+	AP temp = AP_init("0.9999999999999999999999999999");
 
-	for (uint32_t i = 0; i < 10000; i++) {
-		AP_add_to_first(&temp, &first);
-		AP_print(&temp);
-	}
+	AP_print(&temp);
+	AP_print(&first);
 
-	AP copy = AP_copy(&temp);
-
-	AP_print(&copy);
+	/* for (uint32_t i = 0; i < 10000; i++) { */
+	AP_add_to_first(&temp, &first);
+	AP_print(&temp);
+	/* } */
 
 	return 0;
 }
