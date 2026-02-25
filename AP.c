@@ -24,6 +24,7 @@ typedef struct {
 } Whole;
 
 typedef struct {
+	bool positive;
 	Whole whole;
 	Decimal decimal;
 } AP;
@@ -158,6 +159,11 @@ AP AP_init(char *format)
 
 	if (format == NULL) return result;
 
+	if (*format == '-') {
+		result.positive = 0;
+		format++;
+	}
+
 	char *dot = format;
 
 	while (*dot != '.' && *dot != '\0') { // Maybe in the future I will check for newlines too
@@ -182,10 +188,10 @@ AP AP_init(char *format)
 	}
 
 	if (*dot == '\0') {
-		result.decimal.limbs = malloc(INITIAL_COUNT * sizeof(uint64_t));
-		result.decimal.limbs[0] = 0;
-		result.decimal.count = 1;
-		result.decimal.capacity = 1;
+		result.decimal.capacity = 16;
+		result.decimal.count = 0;
+		result.decimal.limbs = malloc(sizeof(uint64_t) * result.decimal.capacity);
+		memset(result.decimal.limbs, 0, sizeof(uint64_t) * result.decimal.capacity);
 		return result;
 	}
 
@@ -261,114 +267,110 @@ void AP_print(AP *ap)
 	return;
 }
 
-AP AP_addition(AP *first, AP *second)
+void AP_add_to_first(AP *first, AP *second)
 {
-	AP result = {0};
+	int32_t i = 0;
 
-	uint32_t shortest = MIN(first->whole.count, second->whole.count);
+	int32_t firstCount = first->whole.count;
+	int32_t secondCount = second->whole.count;
 
-	for (int32_t i = 0; i < shortest; i++) {
+	for (; i < firstCount && i < secondCount; i++) {
 		if (BIGGEST_NUMBER_USABLE - first->whole.limbs[i] >= second->whole.limbs[i]) {
-			AP_add_to_index_whole(&result, i,
-				first->whole.limbs[i] + second->whole.limbs[i]);
+			AP_add_to_index_whole(first, i, second->whole.limbs[i]);
 		} else {
-			AP_add_to_index_whole(&result, i, first->whole.limbs[i] -
-				(BIGGEST_NUMBER_USABLE - second->whole.limbs[i] + 1));
-			AP_add_to_index_whole(&result, i + 1, 1);
+			first->whole.limbs[i] -= (BIGGEST_NUMBER_USABLE - second->whole.limbs[i] + 1);
+			AP_add_to_index_whole(first, i + 1, 1);
 		}
 	}
 
-	if (shortest < first->whole.count) {
-		for (uint32_t i = shortest; i < first->whole.count; i++) {
-			if (i < result.whole.count) {
-				AP_add_to_index_whole(&result, i, first->whole.limbs[i]);
-			} else {
-				AP_append_whole(&result, first->whole.limbs[i]);
-			}
-		}
-	} else if (shortest < second->whole.count) {
-		for (uint32_t i = shortest; i < second->whole.count; i++) {
-			if (i < result.whole.count) {
-				AP_add_to_index_whole(&result, i, second->whole.limbs[i]);
-			} else {
-				AP_append_whole(&result, second->whole.limbs[i]);
-			}
+	if (i < secondCount) {
+		for (uint32_t i = first->whole.count; i < second->whole.count; i++) {
+			AP_append_whole(first, second->whole.limbs[i]);
 		}
 	}
 
-	if (first->decimal.count == 0 && second->decimal.count == 0) {
-		return result;
+	if (second->decimal.count == 0) {
+		return;
 	}
 
-	shortest = MIN(first->decimal.count, second->decimal.count);
+	i = 0;
 
-	uint64_t digitValue = 1;
-	uint32_t digitCount = 0;
+	firstCount = first->decimal.count;
+	secondCount = second->decimal.count;
 
-	for (int32_t i = shortest - 1; i >= 0; i--) {
+	if (firstCount > secondCount) {
+		i = second->decimal.count - 1;
+	} else {
+		i = first->decimal.count - 1;
+	}
+
+	int32_t shortest = i;
+
+	for (; i >= 0; i--) {
 		if (BIGGEST_NUMBER_USABLE - first->decimal.limbs[i] >= second->decimal.limbs[i]) {
-			uint64_t temp = first->decimal.limbs[i] + second->decimal.limbs[i];
-			for (; digitValue <= temp; digitValue *= 10, digitCount++);
-			AP_add_to_index_decimal(&result, i, temp, LONGEST_NUMBER - digitCount);
-			digitValue = 1;
-			digitCount = 0;
+			first->decimal.limbs[i] += second->decimal.limbs[i];
 		} else {
-			uint64_t temp = first->decimal.limbs[i] -
-				(BIGGEST_NUMBER_USABLE - second->decimal.limbs[i] + 1);
-			for (; digitValue <= temp; digitValue *= 10, digitCount++);
-			AP_add_to_index_decimal(&result, i, temp, LONGEST_NUMBER - digitCount);
-			digitValue = 1;
-			digitCount = 0;
+			first->decimal.limbs[i] -= (BIGGEST_NUMBER_USABLE - second->decimal.limbs[i] + 1);
 			if (i != 0) {
-				AP_add_to_index_decimal(&result, i - 1, 1, LONGEST_NUMBER - 1);
+				first->decimal.limbs[i - 1] += 1;
 			} else {
-				AP_add_to_index_whole(&result, 0, 1);
+				first->whole.limbs[0] += 1;
 			}
 		}
 	}
 
-	if (shortest < first->decimal.count) {
-		for (uint32_t i = shortest; i < first->decimal.count; i++) {
-			for (; digitValue <= first->decimal.limbs[i];
-				digitValue *= 10, digitCount++);
-			if (i < result.decimal.count) {
-				AP_add_to_index_decimal(&result, i,
-					first->decimal.limbs[i], LONGEST_NUMBER - digitCount);
-			} else {
-				AP_append_decimal(&result, first->decimal.limbs[i],
-					LONGEST_NUMBER - digitCount);
-			}
-			digitValue = 1;
-			digitCount = 0;
-		}
-	} else if (shortest < second->decimal.count) {
-		for (uint32_t i = shortest; i < second->decimal.count; i++) {
-			for (; digitValue <= first->decimal.limbs[i];
-				digitValue *= 10, digitCount++);
-			if (i < result.decimal.count) {
-				AP_add_to_index_decimal(&result, i, second->decimal.limbs[i],
-					LONGEST_NUMBER - digitCount);
-			} else {
-				AP_append_decimal(&result, second->decimal.limbs[i],
-					LONGEST_NUMBER - digitCount);
-			}
-			digitValue = 1;
-			digitCount = 0;
+	if (shortest + 1 < secondCount) {
+		for (i = shortest + 1; i < secondCount; i++) {
+			uint64_t temp = second->decimal.limbs[i];
+			uint64_t digitValue = 1;
+			uint32_t digitCount = 0;
+			for (; digitValue <= temp; digitValue *= 10, digitCount++);
+			AP_append_decimal(first, second->decimal.limbs[i], LONGEST_NUMBER - digitCount);
 		}
 	}
 
-	return result;
+	return;
+}
+
+AP AP_copy(AP *toBeCopied)
+{
+	AP copy;
+
+	copy.whole.count = toBeCopied->whole.count;
+	copy.whole.capacity = toBeCopied->whole.capacity;
+
+	copy.whole.limbs = malloc(sizeof(uint64_t) * toBeCopied->whole.capacity);
+	memcpy(copy.whole.limbs, toBeCopied->whole.limbs,
+		toBeCopied->whole.capacity * sizeof(uint64_t));
+
+	copy.decimal.count = toBeCopied->decimal.count;
+	copy.decimal.capacity = toBeCopied->decimal.capacity;
+
+	copy.decimal.limbs = malloc(sizeof(uint64_t) * toBeCopied->decimal.capacity);
+	memcpy(copy.decimal.limbs, toBeCopied->decimal.limbs,
+		toBeCopied->decimal.capacity * sizeof(uint64_t));
+
+	return copy;
+}
+
+AP AP_subtraction(AP *first, AP *second)
+{
+	return (AP){0};
 }
 
 int main(void)
 {
-	AP delta = AP_init("0.0000000000000000001");
-	AP cumulative = AP_init("0");
+	AP first = AP_init("1.0000000000000000001");
+	AP temp = AP_init("0");
 
 	for (uint32_t i = 0; i < 10000; i++) {
-		cumulative = AP_addition(&cumulative, &delta);
-		AP_print(&cumulative);
+		AP_add_to_first(&temp, &first);
+		AP_print(&temp);
 	}
+
+	AP copy = AP_copy(&temp);
+
+	AP_print(&copy);
 
 	return 0;
 }
